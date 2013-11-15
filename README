@@ -1,0 +1,19 @@
+XRootD Xeph Open Storage System Plugin
+=======================================
+
+This project contains a plugin for the **XRootD** server which interfaces with
+**Ceph** for the storage of data.
+
+Setup
+======
+
+This plugin is loaded by the XRootD Server. In order to accomplish this, it is
+necessary to indicate the server where the plugin is by adding the following
+line to the server's configuration file:
+
+  ofs.osslib /path/to/libCephOss.so
+
+It is necessary to tell which Ceph instance it should interface with. This is done
+by adding the following file to the same configuration file indicated above:
+
+  cephoss.config /path/to/your/ceph.conf
