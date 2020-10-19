@@ -45,9 +45,23 @@ public:
   virtual int     StatFS(const char *path, char *buff, int &blen, XrdOucEnv *eP=0);
   virtual int     Truncate(const char *, unsigned long long, XrdOucEnv *eP=0);
   virtual int     Unlink(const char *path, int Opts=0, XrdOucEnv *eP=0);
+  void            Shutdown();
 
   CephfsOss();
   virtual ~CephfsOss();
+
+  // static members
+  static void     sShutdown(int sig);
+  static CephfsOss* sInstance;
+
+  static CephfsOss* Instance() {
+    if (sInstance) {
+      return sInstance;
+    } else {
+      sInstance = new CephfsOss();
+      return sInstance;
+    }
+  }
 
 private:
   bool getCephConfiguration(void);

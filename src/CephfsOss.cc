@@ -31,6 +31,7 @@
 #include "CephfsOssFile.hh"
 
 extern XrdSysError OssEroute;
+CephfsOss* CephfsOss::sInstance = 0;
 
 extern "C"
 {
@@ -42,9 +43,7 @@ extern "C"
   {
     OssEroute.SetPrefix("CephfsOss_");
     OssEroute.logger(Logger);
-    CephfsOss* cephOss = new CephfsOss();
-
-    return (cephOss->Init(Logger, config_fn) ? 0 : (XrdOss*) cephOss);
+    return (CephfsOss::Instance()->Init(Logger, config_fn) ? 0 : (XrdOss*) CephfsOss::Instance());
   }
 }
 
@@ -55,9 +54,33 @@ CephfsOss::CephfsOss()
 
 CephfsOss::~CephfsOss()
 {
+  sInstance = 0;
+  Shutdown();
+}
+
+void
+CephfsOss::Shutdown() 
+{
   if (mCephMount) {
+    fprintf(stderr,"------ running shutdown ...\n");
     ceph_shutdown (mCephMount);
+    fprintf(stderr,"------ shutdown completed\n");
+    mCephMount = 0;
   }
+}
+
+void
+CephfsOss::sShutdown(int sig)
+{
+  (void) signal(SIGINT, SIG_IGN);
+  (void) signal(SIGTERM, SIG_IGN);
+  (void) signal(SIGQUIT, SIG_IGN);
+
+  fprintf(stderr,"------ received signal %d\n", sig);
+  if (sInstance) {
+    sInstance->Shutdown();
+  }
+  std::quick_exit(0);
 }
 
 int
@@ -84,6 +107,10 @@ CephfsOss::Init(XrdSysLogger *logger, const char *configFn)
 
   if (ret) {
     fprintf(stderr,"error: ceph mount retc=%d\n", ret);
+  }  else {
+    signal(SIGINT, CephfsOss::sShutdown);
+    signal(SIGTERM, CephfsOss::sShutdown);
+    signal(SIGQUIT, CephfsOss::sShutdown);
   }
   return ret ;
 }
