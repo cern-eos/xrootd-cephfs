@@ -69,6 +69,7 @@ You can modify this behaviour on per-file basis appending CGI parameters to your
 
 A description of these can be found here: https://docs.ceph.com/en/latest/cephfs/file-layouts/
 
+To be able to use that feature you need a special capability which is explained here: https://docs.ceph.com/en/latest/cephfs/client-auth/#layout-and-quota-restriction-the-p-flag
 
 File Ownership
 --------------
@@ -94,7 +95,7 @@ ofs.authorize
 Asynchronous vs. synchronous IO
 -------------------------------
 
-By default an XRootD server uses synchronous (blocking) IO. If you are interested in high-performance streaming you can configure large asynchronous IO using the following two configuration parameters.
+If ```xrootd.async off``` is used the  XRootD server uses synchronous (blocking) IO. If you are interested in high-performance streaming you can configure large asynchronous IO using the following two configuration parameters.
 
 ```
 xrootd.async nosf segsize 16777216
