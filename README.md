@@ -18,10 +18,15 @@ Build
 Setup
 -----
 
-The XRootD configuration file directive to load the OSS plug-in is:
+The required XRootD configuration file directives to use the OSS plug-in are:
 
-  ofs.osslib /path/to/libCephfsOss.so
+```
+  ofs.osslib /path/to/libCephfsOss.so 
+  ofs.persist off           #
+  xrootd.export / nolock    # allow multiple writers
+  xrootd.async off nosf     # use sync IO and don't use sendfile
 
+```
 
 Configuration
 -------------
@@ -68,7 +73,23 @@ A description of these can be found here: https://docs.ceph.com/en/latest/cephfs
 File Ownership
 --------------
 
-By default all files will be accessed as the effective user of the XRootD process. If you want
+By default all files will be accessed as the effective user of the XRootD process.
+
+Running XRootD in NFS style
+---------------------------
+
+If you want file ownership and access control to reflect the authenticated client identity, you can use https://github.com/cern-eos/xrootd-auth-change-uid
+
+This example configuration uses UNIX id mapping:
+
+```
+xrootd.seclib libXrdSec.so
+sec.protocol unix
+sec.protbind * only unix
+
+ofs.authlib /usr/lib64/libAuthChangeFsUid.so
+ofs.authorize
+```
 
 Asynchronous vs. synchronous IO
 -------------------------------
@@ -81,4 +102,7 @@ xrd.buffers maxbsz 16777216
 ```
 
 In this example we use asynchronous IO with 16M block size. Be aware that large IO segment sizes increase the memory requirements for open files.
+
+
+
 
