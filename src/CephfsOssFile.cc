@@ -1,8 +1,9 @@
 /************************************************************************
  * EOS - the CERN Disk Storage System                                   *
- * Copyright © 2013 CERN/Switzerland                                    *
+ * Copyright © 2020 CERN/Switzerland                                    *
  *                                                                      *
  * Author: Joaquim Rocha <joaquim.rocha@cern.ch>                        *
+ *         Andreas-Joachim.Peters <andreas.joachim.peters@cern.ch>      *
  *                                                                      *
  * This program is free software: you can redistribute it and/or modify *
  * it under the terms of the GNU General Public License as published by *
@@ -18,38 +19,40 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.*
  ************************************************************************/
 
+#include <thread>
+#include <future>
 #include <cephfs/libcephfs.h>
 #include <private/XrdOss/XrdOssError.hh>
 #include <XrdOuc/XrdOucEnv.hh>
+#include <XrdSfs/XrdSfsAio.hh>
+#include "CephfsOssFile.hh"
 
-#include "CephOssFile.hh"
+#define CEPHFS_ENV_PREFIX  "cephfs."
 
-#define CEPH_ENV_PREFIX  "ceph."
-
-CephOssFile::CephOssFile(struct ceph_mount_info *cmount)
+CephfsOssFile::CephfsOssFile(struct ceph_mount_info *cmount)
   : mCephMount(cmount)
 {
   fd = 0;
 }
 
-CephOssFile::~CephOssFile()
+CephfsOssFile::~CephfsOssFile()
 {
   Close();
 }
 
 int
-CephOssFile::Close(long long *retsz)
+CephfsOssFile::Close(long long *retsz)
 {
   return ceph_close(mCephMount, fd);
 }
 
 int
-CephOssFile::Open(const char *path, int flags, mode_t mode, XrdOucEnv &env)
+CephfsOssFile::Open(const char *path, int flags, mode_t mode, XrdOucEnv &env)
 {
-  int stripe_unit = (int) env.GetInt(CEPH_ENV_PREFIX "stripe_unit");
-  int stripe_count = (int) env.GetInt(CEPH_ENV_PREFIX "stripe_count");
-  int object_size = (int) env.GetInt(CEPH_ENV_PREFIX  "object_size");
-  char *data_pool = env.Get(CEPH_ENV_PREFIX "data_pool");
+  int stripe_unit = (int) env.GetInt(CEPHFS_ENV_PREFIX "stripe_unit");
+  int stripe_count = (int) env.GetInt(CEPHFS_ENV_PREFIX "stripe_count");
+  int object_size = (int) env.GetInt(CEPHFS_ENV_PREFIX  "object_size");
+  char *data_pool = env.Get(CEPHFS_ENV_PREFIX "pool");
 
   if (stripe_unit < 0)
     stripe_count = 0;
@@ -65,7 +68,7 @@ CephOssFile::Open(const char *path, int flags, mode_t mode, XrdOucEnv &env)
 }
 
 ssize_t
-CephOssFile::Read(off_t offset, size_t blen)
+CephfsOssFile::Read(off_t offset, size_t blen)
 {
   if (fd < 0)
     return (ssize_t)-XRDOSS_E8004;
@@ -74,25 +77,54 @@ CephOssFile::Read(off_t offset, size_t blen)
 }
 
 ssize_t
-CephOssFile::Read(void *buff, off_t offset, size_t blen)
+CephfsOssFile::Read(void *buff, off_t offset, size_t blen)
 {
   return ceph_read(mCephMount, fd, (char *) buff, blen, offset);
 }
 
 int
-CephOssFile::Fstat(struct stat *buff)
+CephfsOssFile::ReadAsync(XrdSfsAio *aiop) {
+  aiop->Result = Read((void*)aiop->sfsAio.aio_buf, aiop->sfsAio.aio_offset, aiop->sfsAio.aio_nbytes);
+  aiop->doneRead();
+  return 0;
+}
+
+
+int
+CephfsOssFile::Write(XrdSfsAio *aiop) {
+  aiop->Result = Write((void*)aiop->sfsAio.aio_buf, aiop->sfsAio.aio_offset, aiop->sfsAio.aio_nbytes);
+  aiop->doneWrite();
+  return 0;
+}
+
+int 
+CephfsOssFile::Read(XrdSfsAio *aiop)
+{
+  int rc;
+  std::async(std::launch::async, [this,aiop] { this->ReadAsync(aiop); });
+  return 0;
+}
+
+ssize_t
+CephfsOssFile::ReadRaw(void *buff, off_t offset, size_t blen)
+{
+  return Read(buff, offset, blen);
+}
+
+int
+CephfsOssFile::Fstat(struct stat *buff)
 {
   return ceph_fstat(mCephMount, fd, buff);
 }
 
 ssize_t
-CephOssFile::Write(const void *buff, off_t offset, size_t blen)
+CephfsOssFile::Write(const void *buff, off_t offset, size_t blen)
 {
   return ceph_write(mCephMount, fd, (const char *) buff, blen, offset);
 }
 
 int
-CephOssFile::Fsync()
+CephfsOssFile::Fsync()
 {
   return ceph_fsync(mCephMount, fd, 1);
 }

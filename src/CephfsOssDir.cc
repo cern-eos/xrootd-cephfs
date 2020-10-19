@@ -1,8 +1,9 @@
 /************************************************************************
  * EOS - the CERN Disk Storage System                                   *
- * Copyright © 2013 CERN/Switzerland                                    *
+ * Copyright © 2020 CERN/Switzerland                                    *
  *                                                                      *
  * Author: Joaquim Rocha <joaquim.rocha@cern.ch>                        *
+           Andreas-Joachim Peters <andreas.joachim.peters@cern.ch>      *
  *                                                                      *
  * This program is free software: you can redistribute it and/or modify *
  * it under the terms of the GNU General Public License as published by *
@@ -18,27 +19,52 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.*
  ************************************************************************/
 
-#ifndef __CEPH_OSS_FILE_HH__
-#define __CEPH_OSS_FILE_HH__
+#include <cephfs/libcephfs.h>
+#include <assert.h>
+#include <XrdSys/XrdSysPlatform.hh>
 
-#include <xrootd/XrdOss/XrdOss.hh>
+#include "CephfsOssDir.hh"
 
-class CephOssFile : public XrdOssDF
+CephfsOssDir::CephfsOssDir(struct ceph_mount_info *cmount)
+  : mCephMount(cmount),
+    mDirRes(0)
 {
-public:
-  CephOssFile(struct ceph_mount_info *cmount);
-  virtual ~CephOssFile();
-  virtual int Open(const char *path, int flags, mode_t mode, XrdOucEnv &env);
-  virtual int Close(long long *retsz=0);
-  virtual ssize_t Read(off_t offset, size_t blen);
-  virtual ssize_t Read(void *buff, off_t offset, size_t blen);
-  virtual int Fstat(struct stat *buff);
-  virtual ssize_t Write(const void *buff, off_t offset, size_t blen);
-  virtual int Fsync(void);
-  virtual int getFD() { return fd; }
+}
 
-private:
-  struct ceph_mount_info *mCephMount;
-};
+CephfsOssDir::~CephfsOssDir()
+{
+  Close();
+}
 
-#endif /* __CEPH_OSS_FILE_HH__ */
+int
+CephfsOssDir::Opendir(const char *path, XrdOucEnv &env)
+{
+  assert(mDirRes == 0);
+  int ret = ceph_opendir(mCephMount, path, &mDirRes);
+  return ret;
+}
+
+int
+CephfsOssDir::Close(long long *retsz)
+{
+  if (mDirRes != 0)
+    ceph_closedir(mCephMount, mDirRes);
+
+  mDirRes = 0;
+
+  return XrdOssOK;
+}
+
+int
+CephfsOssDir::Readdir(char *buff, int blen)
+{
+  assert(mDirRes != 0);
+  struct dirent *dirp = ceph_readdir(mCephMount, mDirRes);
+
+  if (dirp)
+    strlcpy(buff, dirp->d_name, blen);
+  else
+    *buff = '\0';
+
+  return XrdOssOK;
+}

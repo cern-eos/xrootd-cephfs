@@ -1,8 +1,9 @@
 /************************************************************************
  * EOS - the CERN Disk Storage System                                   *
- * Copyright © 2013 CERN/Switzerland                                    *
+ * Copyright © 2020 CERN/Switzerland                                    *
  *                                                                      *
  * Author: Joaquim Rocha <joaquim.rocha@cern.ch>                        *
+ *         Andreas Joachim Peters <andreas.joachim.peters@cern.ch>      *
  *                                                                      *
  * This program is free software: you can redistribute it and/or modify *
  * it under the terms of the GNU General Public License as published by *
@@ -25,9 +26,9 @@
 #include <XrdOuc/XrdOucStream.hh>
 #include <xrootd/XrdVersion.hh>
 
-#include "CephOss.hh"
-#include "CephOssDir.hh"
-#include "CephOssFile.hh"
+#include "CephfsOss.hh"
+#include "CephfsOssDir.hh"
+#include "CephfsOssFile.hh"
 
 extern XrdSysError OssEroute;
 
@@ -39,77 +40,116 @@ extern "C"
                          const char* config_fn,
                          const char* parms)
   {
-    OssEroute.SetPrefix("CephOss_");
+    OssEroute.SetPrefix("CephfsOss_");
     OssEroute.logger(Logger);
-    CephOss* cephOss = new CephOss();
+    CephfsOss* cephOss = new CephfsOss();
 
     return (cephOss->Init(Logger, config_fn) ? 0 : (XrdOss*) cephOss);
   }
 }
 
-CephOss::CephOss()
+CephfsOss::CephfsOss()
 {
-  ceph_create (&mCephMount, 0);
+  mCephMount = 0;
 }
 
-CephOss::~CephOss()
+CephfsOss::~CephfsOss()
 {
-  ceph_shutdown (mCephMount);
+  if (mCephMount) {
+    ceph_shutdown (mCephMount);
+  }
 }
 
 int
-CephOss::Init(XrdSysLogger *logger, const char *configFn)
+CephfsOss::Init(XrdSysLogger *logger, const char *configFn)
 {
   mConfigFN = configFn;
 
-  const char *cephConfigPath = getCephConfigurationFilePath();
-  if (cephConfigPath == 0 || ceph_conf_read_file(mCephMount, cephConfigPath))
+  bool cephConfigurationOk = getCephConfiguration();
+
+  if ( !cephConfigurationOk ) {
     return -1;
+  }
 
-  int ret = ceph_mount(mCephMount, "/");
+  ceph_create (&mCephMount, mCephConfig["id"].c_str());
 
+  if ( ceph_conf_read_file(mCephMount, mCephConfig["config"].c_str())) {
+    fprintf(stderr,"error: failed to read config file %s\n", mCephConfig["config"].c_str());
+    return -1;
+  }
+
+
+  std::string volume = mCephConfig["volume"];
+  int ret = ceph_mount(mCephMount, volume.c_str());
+
+  if (ret) {
+    fprintf(stderr,"error: ceph mount retc=%d\n", ret);
+  }
   return ret ;
 }
 
-const char *
-CephOss::getCephConfigurationFilePath()
+bool 
+CephfsOss::getCephConfiguration()
 {
   XrdOucStream Config;
   int cfgFD;
-  char *var, *configPath = 0;
+  char *var;
 
-  if ((cfgFD = open(mConfigFN, O_RDONLY, 0)) < 0)
-  {
+  if ((cfgFD = open(mConfigFN, O_RDONLY, 0)) < 0) {
     return 0;
   }
 
+  mCephConfig["volume"] = "/";
+  mCephConfig["id"] = "admin";
+  mCephConfig["config"] = "/etc/ceph/ceph.conf";
+
   Config.Attach(cfgFD);
-  while ((var = Config.GetMyFirstWord()))
-  {
-    if (strcmp(var, "cephoss.config") == 0)
-    {
-      var += 14;
-      configPath = Config.GetWord();
-      break;
+  while ((var = Config.GetMyFirstWord())) {
+    if (strcmp(var, "cephfs.config") == 0) {
+      var += 14; 
+     mCephConfig["config"] = Config.GetWord();
+      continue;
     }
+    
+    if (strcmp(var, "cephfs.id") == 0) {
+      var += 9;
+      mCephConfig["id"] = Config.GetWord();
+      continue;
+    }
+
+    if (strcmp(var, "cephfs.volume") == 0) {
+      var += 13;
+      mCephConfig["volume"] = Config.GetWord();
+      continue;
+    }
+
+    if (strncmp(var, "cephfs.", 7) == 0) {
+      fprintf(stderr,"error: unknown cephfs configuration '%s'\n", var);
+      return false;
+    }
+  }
+  
+  for ( auto item : mCephConfig ) {
+    fprintf(stderr,"       cephfs.%-6s %s\n", item.first.c_str(),  item.second.c_str());
   }
 
   Config.Close();
 
-  return configPath;
+  return true;
 }
 
 int
-CephOss::Stat(const char* path,
+CephfsOss::Stat(const char* path,
 	      struct stat* buff,
 	      int opts,
 	      XrdOucEnv* env)
 {
+  fprintf(stderr,"stat:%s\n", path);
   return ceph_stat(mCephMount, path, buff);
 }
 
 int
-CephOss::Mkdir(const char *path, mode_t mode, int mkpath, XrdOucEnv *envP)
+CephfsOss::Mkdir(const char *path, mode_t mode, int mkpath, XrdOucEnv *envP)
 {
   if (!mkpath)
     return ceph_mkdir(mCephMount, path, mode);
@@ -118,13 +158,13 @@ CephOss::Mkdir(const char *path, mode_t mode, int mkpath, XrdOucEnv *envP)
 }
 
 int
-CephOss::Remdir(const char *path, int Opts, XrdOucEnv *eP)
+CephfsOss::Remdir(const char *path, int Opts, XrdOucEnv *eP)
 {
   return ceph_rmdir(mCephMount, path);
 }
 
 int
-CephOss::Rename(const char *from,
+CephfsOss::Rename(const char *from,
 		const char *to,
 		XrdOucEnv *eP1,
 		XrdOucEnv *eP2)
@@ -133,19 +173,19 @@ CephOss::Rename(const char *from,
 }
 
 int
-CephOss::Unlink(const char *path, int Opts, XrdOucEnv *eP)
+CephfsOss::Unlink(const char *path, int Opts, XrdOucEnv *eP)
 {
   return ceph_unlink(mCephMount, path);
 }
 
 int
-CephOss::Chmod(const char *path, mode_t mode, XrdOucEnv *envP)
+CephfsOss::Chmod(const char *path, mode_t mode, XrdOucEnv *envP)
 {
   return ceph_chmod(mCephMount, path, mode);
 }
 
 int
-CephOss::Truncate (const char* path,
+CephfsOss::Truncate (const char* path,
 		   unsigned long long size,
 		   XrdOucEnv* envP)
 {
@@ -153,19 +193,19 @@ CephOss::Truncate (const char* path,
 }
 
 XrdOssDF *
-CephOss::newDir(const char *tident)
+CephfsOss::newDir(const char *tident)
 {
-  return dynamic_cast<XrdOssDF *>(new CephOssDir(mCephMount));
+  return dynamic_cast<XrdOssDF *>(new CephfsOssDir(mCephMount));
 }
 
 XrdOssDF *
-CephOss::newFile(const char *tident)
+CephfsOss::newFile(const char *tident)
 {
-  return dynamic_cast<XrdOssDF *>(new CephOssFile(mCephMount));
+  return dynamic_cast<XrdOssDF *>(new CephfsOssFile(mCephMount));
 }
 
 int
-CephOss::Create(const char *tident, const char *path, mode_t access_mode,
+CephfsOss::Create(const char *tident, const char *path, mode_t access_mode,
                 XrdOucEnv &env, int Opts)
 {
   struct stat stbuf;
@@ -209,7 +249,7 @@ CephOss::Create(const char *tident, const char *path, mode_t access_mode,
 }
 
 int
-CephOss::StatFS(const char *path, char *buff, int &blen, XrdOucEnv *eP)
+CephfsOss::StatFS(const char *path, char *buff, int &blen, XrdOucEnv *eP)
 {
   struct statvfs statBuf;
   long long fSpace = 0, fSize = 0;
@@ -232,4 +272,4 @@ CephOss::StatFS(const char *path, char *buff, int &blen, XrdOucEnv *eP)
   return XrdOssOK;
 }
 
-XrdVERSIONINFO(XrdOssGetStorageSystem, CephOss);
+XrdVERSIONINFO(XrdOssGetStorageSystem, CephfsOss);

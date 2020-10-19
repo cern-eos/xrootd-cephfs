@@ -5,6 +5,9 @@ set( VERSION_MAJOR "0" )
 set( VERSION_MINOR "1" )
 set( VERSION_PATCH "0")
 
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 cmake_minimum_required( VERSION 2.6 )
 project( CephOSS )
 
